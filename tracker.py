@@ -33,7 +33,7 @@ WATCHLIST = {
 def fetch_terminal_data(ticker):
     try:
         t_obj = yf.Ticker(ticker)
-        df = t_obj.history(period="3mo", interval="1d")
+        df = t_obj.history(period="6mo", interval="1d")
         
         # Safely fetch news list
         raw_news = t_obj.news
@@ -71,7 +71,6 @@ def calculate_news_flame(news_list):
     highest_status = ("⚪ Static Tape", "gray", 999.0)
     
     for article in news_list:
-        # Handle structural key lookups gracefully
         pub_time = article.get('providerPublishTime') or article.get('pubdate') or article.get('publishDate')
         if not pub_time:
             continue
@@ -164,19 +163,39 @@ with col_main:
         st.markdown("#### 📈 Multi-Pane Technical Analysis Workspace")
         c1, c2 = st.columns(2)
         
+        # Chart 1: 6-Month Macro Swing Frame (With interactive drag + scroll controls)
         with c1:
             fig1 = go.Figure(data=[go.Candlestick(
                 x=focus_data.index, open=focus_data['Open'], high=focus_data['High'],
                 low=focus_data['Low'], close=focus_data['Close'], name="Macro Daily"
             )])
-            fig1.update_layout(template="plotly_dark", title="6-Month Trend Framework", height=240, margin=dict(l=10,r=10,t=30,b=10), xaxis_rangeslider_visible=False)
-            st.plotly_chart(fig1, use_container_width=True)
+            fig1.update_layout(
+                template="plotly_dark", 
+                title="6-Month Trend Framework", 
+                height=260, 
+                margin=dict(l=10, r=10, t=30, b=10), 
+                xaxis_rangeslider_visible=False,
+                dragmode="pan"  # Sets default action to pan around the chart
+            )
+            # 🛠️ This enables mouse-wheel and trackpad pinch zooming!
+            st.plotly_chart(fig1, use_container_width=True, config={'scrollZoom': True})
             
+        # Chart 2: 30-Day Aggressive Momentum Frame
         with c2:
             short_df = focus_data.tail(30)
-            fig2 = go.Figure(data=[go.Scatter(x=short_df.index, y=short_df['Close'], mode='lines+markers', line=dict(color='#00ffcc'), name="30D Close")])
-            fig2.update_layout(template="plotly_dark", title="30-Day Velocity Zoom Panel", height=240, margin=dict(l=10,r=10,t=30,b=10))
-            st.plotly_chart(fig2, use_container_width=True)
+            fig2 = go.Figure(data=[go.Scatter(
+                x=short_df.index, y=short_df['Close'], 
+                mode='lines+markers', line=dict(color='#00ffcc'), name="30D Close"
+            )])
+            fig2.update_layout(
+                template="plotly_dark", 
+                title="30-Day Velocity Zoom Panel", 
+                height=260, 
+                margin=dict(l=10, r=10, t=30, b=10),
+                dragmode="pan"
+            )
+            # 🛠️ Unlocks mouse-wheel scrolling/zooming on the second pane too
+            st.plotly_chart(fig2, use_container_width=True, config={'scrollZoom': True})
 
         # 📰 CURRENT FOCUS ACTIVE NEWS FEED PANEL
         st.markdown("---")
@@ -188,17 +207,14 @@ with col_main:
                 if valid_articles_count >= 5:
                     break
                 
-                # Defensively unpack dictionary attributes with multi-key fallbacks
                 title = item.get('title') or item.get('headline')
                 link = item.get('link') or item.get('url') or "#"
                 publisher = item.get('publisher') or item.get('source') or "Financial Feed"
                 p_time = item.get('providerPublishTime') or item.get('pubdate') or item.get('publishDate')
                 
-                # If there's no title, do not print an empty box
                 if not title:
                     continue
                 
-                # Parse timestamp safely
                 time_str = "Recent"
                 badge, txt_col = "📁 [TRACKING]", "#888888"
                 if p_time:
