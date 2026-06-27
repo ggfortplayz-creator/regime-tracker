@@ -16,7 +16,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("⚡ Pro Momentum Station & News Catalyst Terminal")
+st.title("⚡ TapeStrike Premium Momentum Terminal")
 
 # 📋 Terminal Core Watchlist
 WATCHLIST = {
