@@ -6,7 +6,7 @@ import plotly.graph_objects as go
 from datetime import datetime, timezone
 
 # 🏢 Page Initialization
-st.set_page_config(layout="wide", page_title="⚡ Momentum Terminal")
+st.set_page_config(layout="wide", page_title="⚡ TapeStrike Terminal")
 
 st.markdown("""
     <style>
@@ -16,6 +16,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# ⚡ Your Official Software Brand Title
 st.title("⚡ TapeStrike Premium Momentum Terminal")
 
 # 📋 Terminal Core Watchlist
@@ -28,8 +29,8 @@ WATCHLIST = {
     "Crude Oil Energy": "USO"
 }
 
-# 🔄 Caching Core Math Data & News
-@st.cache_data(ttl=300)
+# 🔄 Caching Core Math Data & News - STRICT 60-SECOND REFRESH
+@st.cache_data(ttl=60)  # ⏱️ Wipes cache every 60 seconds to pull live news updates
 def fetch_terminal_data(ticker):
     try:
         t_obj = yf.Ticker(ticker)
@@ -163,7 +164,7 @@ with col_main:
         st.markdown("#### 📈 Multi-Pane Technical Analysis Workspace")
         c1, c2 = st.columns(2)
         
-        # Chart 1: 6-Month Macro Swing Frame (With interactive drag + scroll controls)
+        # Chart 1: 6-Month Macro Swing Frame
         with c1:
             fig1 = go.Figure(data=[go.Candlestick(
                 x=focus_data.index, open=focus_data['Open'], high=focus_data['High'],
@@ -175,9 +176,8 @@ with col_main:
                 height=260, 
                 margin=dict(l=10, r=10, t=30, b=10), 
                 xaxis_rangeslider_visible=False,
-                dragmode="pan"  # Sets default action to pan around the chart
+                dragmode="pan"
             )
-            # 🛠️ This enables mouse-wheel and trackpad pinch zooming!
             st.plotly_chart(fig1, use_container_width=True, config={'scrollZoom': True})
             
         # Chart 2: 30-Day Aggressive Momentum Frame
@@ -194,7 +194,6 @@ with col_main:
                 margin=dict(l=10, r=10, t=30, b=10),
                 dragmode="pan"
             )
-            # 🛠️ Unlocks mouse-wheel scrolling/zooming on the second pane too
             st.plotly_chart(fig2, use_container_width=True, config={'scrollZoom': True})
 
         # 📰 CURRENT FOCUS ACTIVE NEWS FEED PANEL
@@ -208,40 +207,4 @@ with col_main:
                     break
                 
                 title = item.get('title') or item.get('headline')
-                link = item.get('link') or item.get('url') or "#"
-                publisher = item.get('publisher') or item.get('source') or "Financial Feed"
-                p_time = item.get('providerPublishTime') or item.get('pubdate') or item.get('publishDate')
-                
-                if not title:
-                    continue
-                
-                time_str = "Recent"
-                badge, txt_col = "📁 [TRACKING]", "#888888"
-                if p_time:
-                    try:
-                        dt_pub = datetime.fromtimestamp(int(p_time), timezone.utc)
-                        time_str = dt_pub.strftime('%H:%M:%S UTC')
-                        h_diff = (datetime.now(timezone.utc) - dt_pub).total_seconds() / 3600.0
-                        
-                        if h_diff <= 1.0:
-                            badge, txt_col = "💥 [CRIMSON FLASH]", "#ff3333"
-                        elif h_diff <= 5.0:
-                            badge, txt_col = "🔥 [ORANGE CATALYST]", "#ff9933"
-                        elif h_diff <= 12.0:
-                            badge, txt_col = "☀️ [YELLOW GLOW]", "#ffff33"
-                    except:
-                        pass
-                    
-                st.markdown(f"""
-                    <div style="padding:8px; border-left: 4px solid {txt_col}; background-color: #1e1e1e; margin-bottom:6px; border-radius:4px;">
-                        <span style="color: {txt_col}; font-weight:bold;">{badge} ({time_str})</span><br/>
-                        <a href="{link}" target="_blank" style="color: #ffffff; font-weight:500; text-decoration:none;">{title}</a><br/>
-                        <span style="color: #888888; font-size:11px;">Source: {publisher}</span>
-                    </div>
-                """, unsafe_allow_html=True)
-                valid_articles_count += 1
-            
-            if valid_articles_count == 0:
-                st.info("No formatted market news items available at this time.")
-        else:
-            st.info("No active structural print cycles found for this asset index.")
+                link = item.get
