@@ -6,17 +6,17 @@ import streamlit as st
 TRENDING_REGIME = "Trending / High Efficiency"
 CHOPPY_REGIME = "Choppy / Mean Reversion"
 
-# 🔄 1. Cache the data request to prevent Yahoo Finance Rate Limits
-@st.cache_data(ttl=600) # Caches the data for 10 minutes
+# 🔄 1. Cache the data request to prevent Yahoo Finance Rate Limits and Multi-index Column Issues
+@st.cache_data(ttl=600)  # Caches the data for 10 minutes
 def fetch_market_data(ticker):
     try:
-        # Attempt to pull intraday data
-        df = yf.download(ticker, period="20d", interval="5m", progress=False)
+        # Using Ticker().history() ensures a flat, single-level column DataFrame (Open, High, Low, Close)
+        ticker_obj = yf.Ticker(ticker)
+        df = ticker_obj.history(period="3mo", interval="1d")
         
-        # Fallback if intraday data is blocked or empty
-        if df.empty:
-            df = yf.download(ticker, period="3mo", interval="1d", progress=False)
-            
+        # Clean up index format for the Streamlit tables
+        if df is not None and not df.empty:
+            df.index = pd.to_datetime(df.index).date
         return df
     except Exception as e:
         return None
@@ -40,7 +40,6 @@ def calculate_choppiness(df, period=14):
     low = df['Low'].rolling(window=period).min()
     close = df['Close']
     
-    # True Range calculation
     tr1 = df['High'] - df['Low']
     tr2 = (df['High'] - close.shift(1)).abs()
     tr3 = (df['Low'] - close.shift(1)).abs()
@@ -53,13 +52,14 @@ def calculate_choppiness(df, period=14):
     return chop
 
 def calculate_adx(df, period=14):
-    # Simplified standard ADX logic for the pipeline
     plus_dm = df['High'].diff()
     minus_dm = df['Low'].diff()
     
-    plus_dm[plus_dm < 0] = 0
-    minus_dm[minus_dm > 0] = 0
-    minus_dm = minus_dm.abs()
+    plus_dm = np.where((plus_dm > minus_dm) & (plus_dm > 0), plus_dm, 0.0)
+    minus_dm = np.where((minus_dm > plus_dm) & (minus_dm > 0), minus_dm, 0.0)
+    
+    plus_dm = pd.Series(plus_dm, index=df.index)
+    minus_dm = pd.Series(minus_dm, index=df.index)
     
     tr1 = df['High'] - df['Low']
     tr2 = (df['High'] - df['Close'].shift(1)).abs()
@@ -84,40 +84,4 @@ target_ticker = st.text_input("Enter Ticker to Scan:", value="SPY").upper()
 with st.spinner(f"Fetching structural tape for {target_ticker}..."):
     data = fetch_market_data(target_ticker)
 
-if data is None or data.empty:
-    st.error("🚦 Yahoo Finance is currently rate-limiting this cloud server's IP address. Please wait a few moments and refresh the app to retry.")
-else:
-    st.success(f"📦 Successfully parsed data for {target_ticker}!")
-    
-    # Run the math engine
-    data['ATR'] = calculate_atr(data)
-    data['CHOP'] = calculate_choppiness(data)
-    data['ADX'] = calculate_adx(data)
-    
-    # Extract latest readings
-    latest_chop = float(data['CHOP'].iloc[-1])
-    latest_adx = float(data['ADX'].iloc[-1])
-    latest_atr = float(data['ATR'].iloc[-1])
-    latest_price = float(data['Close'].iloc[-1])
-    
-    # Classify State
-    if latest_adx >= 23.0 and latest_chop < 50.0:
-        regime = TRENDING_REGIME
-        color = "green"
-    else:
-        regime = CHOPPY_REGIME
-        color = "orange"
-        
-    # 🖥️ Render beautiful UI Cards
-    st.markdown("---")
-    st.markdown(f"### Current Market Regime: <span style='color:{color};'>{regime}</span>", unsafe_allow_html=True)
-    
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Last Price", f"${latest_price:,.2f}")
-    col2.metric("Choppiness Index", f"{latest_chop:.2f}")
-    col3.metric("ADX Strength", f"{latest_adx:.2f}")
-    col4.metric("ATR Volatility", f"${latest_atr:.2f}")
-    
-    # Show underlying data preview
-    st.markdown("### Recent Technical Tape Data")
-    st.dataframe(data[['Close', 'ATR', 'CHOP', 'ADX']].tail(10))
+if data is None or data
