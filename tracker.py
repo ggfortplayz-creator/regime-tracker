@@ -16,7 +16,7 @@ st.markdown("""
         .stDataFrame { font-size: 12px !important; }
         .alert-box { padding: 6px; background-color: #1a1a1a; border-radius: 4px; margin-bottom: 4px; font-family: monospace; font-size: 11px; }
         .heatmap-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin-top: 5px; }
-        .heatmap-card { padding: 12px; border-radius: 4px; text-align: center; font-weight: bold; font-family: monospace; font-size: 13px; }
+        .heatmap-card { padding: 12px; border-radius: 4px; text-align: center; font-weight: bold; font-family: monospace; font-size: 13px; min-height: 55px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -94,7 +94,7 @@ def fetch_sector_data():
     for sym, name in SECTORS.items():
         try:
             tk = yf.Ticker(sym)
-            h = tk.history(period="5d")  # Requesting 5 days to ensure historical data depth on weekends
+            h = tk.history(period="5d")
             if h is not None and len(h) >= 2:
                 h = h.dropna(subset=['Close'])
                 c_today = h['Close'].iloc[-1]
@@ -192,19 +192,19 @@ with col_scan:
     st.markdown("---")
     st.markdown("### 🗺️ Institutional Sector Heatmap")
     
-    # Building layout directly in HTML with clean closing tags to protect containment
+    # Render out individual grid components with explicit, safe string parsing
     heatmap_html = "<div class='heatmap-grid'>"
     for sec_name, sec_val in sector_map.items():
         val_checked = 0.0 if (pd.isna(sec_val) or np.isnan(sec_val)) else sec_val
         bg_col = "#1c3b2b" if val_checked >= 0 else "#4a151b"
         txt_col = "#33ff99" if val_checked >= 0 else "#ff4d62"
         sign = "+" if val_checked >= 0 else ""
-        heatmap_html += f"""
-            <div class='heatmap-card' style='background-color: {bg_col}; color: {txt_col};'>
-                {sec_name}<br/>{sign}{val_checked:.2f}%
-            </div>
-        """
+        
+        heatmap_html += f"<div class='heatmap-card' style='background-color: {bg_col}; color: {txt_col};'>{sec_name}<br/>{sign}{val_checked:.2f}%</div>"
+    
     heatmap_html += "</div>"
+    
+    # 🎯 Single solid injection point fixes the display formatting leak completely!
     st.markdown(heatmap_html, unsafe_allow_html=True)
     
     st.markdown("---")
