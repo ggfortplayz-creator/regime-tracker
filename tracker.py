@@ -12,10 +12,12 @@ def fetch_market_data(ticker):
     try:
         # Using Ticker().history() ensures a flat, single-level column DataFrame (Open, High, Low, Close)
         ticker_obj = yf.Ticker(ticker)
-        df = ticker_obj.history(period="3mo", interval="1d")
+        # Fetch 6 months of data to ensure indicators have enough history to stabilize accurately
+        df = ticker_obj.history(period="6mo", interval="1d")
         
-        # Clean up index format for the Streamlit tables
         if df is not None and not df.empty:
+            # Drop empty placeholder rows (like weekend rows) immediately
+            df = df.dropna(subset=['Close'])
             df.index = pd.to_datetime(df.index).date
         return df
     except Exception as e:
@@ -42,7 +44,7 @@ def calculate_choppiness(df, period=14):
     
     tr1 = df['High'] - df['Low']
     tr2 = (df['High'] - close.shift(1)).abs()
-    tr3 = (low - close.shift(1)).abs()
+    tr3 = (df['Low'] - close.shift(1)).abs()
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
     
     sum_tr = tr.rolling(window=period).sum()
@@ -84,7 +86,6 @@ target_ticker = st.text_input("Enter Ticker to Scan:", value="SPY").upper()
 with st.spinner(f"Fetching structural tape for {target_ticker}..."):
     data = fetch_market_data(target_ticker)
 
-# 🔑 THIS IS THE FIXED LINE:
 if data is None or data.empty:
     st.error("🚦 Yahoo Finance is currently rate-limiting this cloud server's IP address. Please wait a few moments and refresh the app to retry.")
 else:
@@ -95,11 +96,14 @@ else:
     data['CHOP'] = calculate_choppiness(data)
     data['ADX'] = calculate_adx(data)
     
-    # Extract latest readings
-    latest_chop = float(data['CHOP'].iloc[-1])
-    latest_adx = float(data['ADX'].iloc[-1])
-    latest_atr = float(data['ATR'].iloc[-1])
-    latest_price = float(data['Close'].iloc[-1])
+    # Double-check we drop any calculation NaN rows before grabbing metrics
+    clean_data = data.dropna(subset=['ATR', 'CHOP', 'ADX'])
+    
+    # Extract latest valid readings
+    latest_chop = float(clean_data['CHOP'].iloc[-1])
+    latest_adx = float(clean_data['ADX'].iloc[-1])
+    latest_atr = float(clean_data['ATR'].iloc[-1])
+    latest_price = float(clean_data['Close'].iloc[-1])
     
     # Classify State
     if latest_adx >= 23.0 and latest_chop < 50.0:
@@ -121,4 +125,4 @@ else:
     
     # Show underlying data preview
     st.markdown("### Recent Technical Tape Data")
-    st.dataframe(data[['Close', 'ATR', 'CHOP', 'ADX']].tail(10))
+    st.dataframe(clean_data[['Close', 'ATR', 'CHOP', 'ADX']].tail(10))
