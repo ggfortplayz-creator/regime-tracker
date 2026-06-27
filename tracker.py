@@ -13,6 +13,7 @@ st.markdown("""
         .block-container { padding-top: 1rem; padding-bottom: 1rem; }
         div[data-testid="stMetricValue"] { font-size: 24px !important; font-weight: bold; }
         .stDataFrame { font-size: 12px !important; }
+        .alert-box { padding: 6px; background-color: #1a1a1a; border-radius: 4px; margin-bottom: 4px; font-family: monospace; font-size: 11px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -30,27 +31,27 @@ WATCHLIST = {
 }
 
 # 🔄 Caching Core Math Data & News - STRICT 60-SECOND REFRESH
-@st.cache_data(ttl=60)  # ⏱️ Wipes cache every 60 seconds to pull live news updates
+@st.cache_data(ttl=60)
 def fetch_terminal_data(ticker):
     try:
         t_obj = yf.Ticker(ticker)
         df = t_obj.history(period="6mo", interval="1d")
-        
-        # Safely fetch news list
         raw_news = t_obj.news
         news_feed = raw_news if isinstance(raw_news, list) else []
         
         if df is not None and not df.empty:
             df = df.dropna(subset=['Close'])
-            high, low, close = df['High'], df['Low'], df['Close']
+            high, low, close, volume = df['High'], df['Low'], df['Close'], df['Volume']
             close_prev = close.shift(1)
+            
+            # 1. True Range, ATR & Chop calculations
             tr = pd.concat([high - low, (high - close_prev).abs(), (low - close_prev).abs()], axis=1).max(axis=1)
             df['ATR'] = tr.rolling(window=14).mean()
-            
             sum_tr = tr.rolling(window=14).sum()
             range_hl = high.rolling(window=14).max() - low.rolling(window=14).min()
             df['CHOP'] = 100 * (np.log10(sum_tr / range_hl) / np.log10(14))
             
+            # 2. ADX calculation
             plus_dm = np.where((high.diff() > low.diff().abs()) & (high.diff() > 0), high.diff(), 0.0)
             minus_dm = np.where((low.diff() > high.diff()) & (low.diff() > 0), low.diff(), 0.0)
             plus_di = 100 * (pd.Series(plus_dm, index=df.index).rolling(window=14).mean() / df['ATR'])
@@ -58,16 +59,19 @@ def fetch_terminal_data(ticker):
             dx = 100 * ((plus_di - minus_di).abs() / (plus_di + minus_di))
             df['ADX'] = dx.rolling(window=14).mean()
             
-            return df.dropna(subset=['ATR', 'CHOP', 'ADX']), news_feed
+            # 3. RVOL Calculation (Current Day Volume / 20-Day Average Volume)
+            df['Vol_Avg20'] = volume.rolling(window=20).mean()
+            df['RVOL'] = volume / df['Vol_Avg20']
+            
+            return df.dropna(subset=['ATR', 'CHOP', 'ADX', 'RVOL']), news_feed
     except:
         return None, []
     return None, []
 
-# 🔥 1. The Recency Catalyst Flame Engine
+# 🔥 The Recency Catalyst Flame Engine
 def calculate_news_flame(news_list):
     if not news_list:
         return "⚪ No Recent Feeds", "gray"
-    
     now = datetime.now(timezone.utc)
     highest_status = ("⚪ Static Tape", "gray", 999.0)
     
@@ -75,14 +79,11 @@ def calculate_news_flame(news_list):
         pub_time = article.get('providerPublishTime') or article.get('pubdate') or article.get('publishDate')
         if not pub_time:
             continue
-            
         try:
             dt_pub = datetime.fromtimestamp(int(pub_time), timezone.utc)
         except:
             continue
-            
         hours_ago = (now - dt_pub).total_seconds() / 3600.0
-        
         if hours_ago <= 1.0:
             return "💥 FRESH CATALYST (<1h)", "red"
         elif hours_ago <= 5.0 and highest_status[2] > 5.0:
@@ -95,6 +96,7 @@ def calculate_news_flame(news_list):
 # 🗂️ Compile Sidebar Scanner Engine Data
 matrix_results = []
 news_store = {}
+hod_alerts = []
 
 for name, ticker in WATCHLIST.items():
     df_metrics, raw_news = fetch_terminal_data(ticker)
@@ -107,13 +109,17 @@ for name, ticker in WATCHLIST.items():
         comp_score = (latest['CHOP'] * 1.5) - (latest['ADX'] * 0.5)
         comp_score = max(0.0, min(100.0, comp_score))
         
+        # 🚨 HOD Momentum Trigger Logic
+        if latest['Close'] >= (latest['High'] * 0.995):
+            hod_alerts.append(f"⚡ [ALERT] {ticker} striking near session highs. Price: ${latest['Close']:,.2f} | RVOL: {latest['RVOL']:.1f}x")
+            
         matrix_results.append({
             "Symbol": ticker,
             "Price": f"${latest['Close']:,.2f}",
+            "RVOL": round(latest['RVOL'], 1),
             "Breakout Potential": round(comp_score, 1),
             "News State": flame_label,
-            "ADX": round(latest['ADX'], 1),
-            "CHOP": round(latest['CHOP'], 1)
+            "ADX": round(latest['ADX'], 1)
         })
 
 scanner_df = pd.DataFrame(matrix_results).sort_values(by="Breakout Potential", ascending=False)
@@ -126,14 +132,21 @@ with col_scan:
     st.dataframe(
         scanner_df,
         column_config={
-            "Breakout Potential": st.column_config.ProgressColumn(
-                "Potential", format="%.0f%%", min_value=0, max_value=100
-            )
+            "Breakout Potential": st.column_config.ProgressColumn("Potential", format="%.0f%%", min_value=0, max_value=100),
+            "RVOL": st.column_config.NumberColumn("RVOL", format="%.1fx")
         },
         use_container_width=True,
         hide_index=True
     )
     
+    st.markdown("---")
+    st.markdown("### 🚨 High-Of-Day (HOD) Momentum Stream")
+    if hod_alerts:
+        for alert in hod_alerts:
+            st.markdown(f"<div class='alert-box' style='border-left: 3px solid #00ffcc; color: #00ffcc;'>{alert}</div>", unsafe_allow_html=True)
+    else:
+        st.markdown("<div class='alert-box' style='color:#666;'>No active structural breakout prints running.</div>", unsafe_allow_html=True)
+        
     st.markdown("---")
     st.markdown("### ⚠️ Live Volatility Conditions")
     for idx, row in scanner_df.iterrows():
@@ -149,62 +162,16 @@ with col_scan:
 with col_main:
     st.markdown("### 🎯 Focused Command Workspace")
     focus_ticker = st.selectbox("Select Core Asset Focus to Route Terminal Visuals:", list(WATCHLIST.values()))
-    
     focus_data, focus_news = fetch_terminal_data(focus_ticker)
     
     if focus_data is not None and not focus_data.empty:
         latest_focus = focus_data.iloc[-1]
         
+        # Calculate Key S&R Floor/Ceiling lines dynamically
+        prev_session = focus_data.iloc[-2] if len(focus_data) > 1 else latest_focus
+        p_high = prev_session['High']
+        p_low = prev_session['Low']
+        
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Last Executed Price", f"${latest_focus['Close']:,.2f}")
-        m2.metric("ADX Vector Strength", f"{latest_focus['ADX']:.2f}")
-        m3.metric("Structural Chop Index", f"{latest_focus['CHOP']:.2f}")
-        m4.metric("ATR Band Drift", f"${latest_focus['ATR']:.2f}")
-        
-        st.markdown("#### 📈 Multi-Pane Technical Analysis Workspace")
-        c1, c2 = st.columns(2)
-        
-        # Chart 1: 6-Month Macro Swing Frame
-        with c1:
-            fig1 = go.Figure(data=[go.Candlestick(
-                x=focus_data.index, open=focus_data['Open'], high=focus_data['High'],
-                low=focus_data['Low'], close=focus_data['Close'], name="Macro Daily"
-            )])
-            fig1.update_layout(
-                template="plotly_dark", 
-                title="6-Month Trend Framework", 
-                height=260, 
-                margin=dict(l=10, r=10, t=30, b=10), 
-                xaxis_rangeslider_visible=False,
-                dragmode="pan"
-            )
-            st.plotly_chart(fig1, use_container_width=True, config={'scrollZoom': True})
-            
-        # Chart 2: 30-Day Aggressive Momentum Frame
-        with c2:
-            short_df = focus_data.tail(30)
-            fig2 = go.Figure(data=[go.Scatter(
-                x=short_df.index, y=short_df['Close'], 
-                mode='lines+markers', line=dict(color='#00ffcc'), name="30D Close"
-            )])
-            fig2.update_layout(
-                template="plotly_dark", 
-                title="30-Day Velocity Zoom Panel", 
-                height=260, 
-                margin=dict(l=10, r=10, t=30, b=10),
-                dragmode="pan"
-            )
-            st.plotly_chart(fig2, use_container_width=True, config={'scrollZoom': True})
-
-        # 📰 CURRENT FOCUS ACTIVE NEWS FEED PANEL
-        st.markdown("---")
-        st.markdown("### 📰 Routed Catalyst Streaming Feed")
-        
-        if focus_news:
-            valid_articles_count = 0
-            for item in focus_news:
-                if valid_articles_count >= 5:
-                    break
-                
-                title = item.get('title') or item.get('headline')
-                link = item.get
+        m2.metric("RVOL Factor", f"{latest_focus
