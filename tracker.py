@@ -42,7 +42,7 @@ def calculate_choppiness(df, period=14):
     
     tr1 = df['High'] - df['Low']
     tr2 = (df['High'] - close.shift(1)).abs()
-    tr3 = (df['Low'] - close.shift(1)).abs()
+    tr3 = (low - close.shift(1)).abs()
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
     
     sum_tr = tr.rolling(window=period).sum()
@@ -84,4 +84,41 @@ target_ticker = st.text_input("Enter Ticker to Scan:", value="SPY").upper()
 with st.spinner(f"Fetching structural tape for {target_ticker}..."):
     data = fetch_market_data(target_ticker)
 
-if data is None or data
+# 🔑 THIS IS THE FIXED LINE:
+if data is None or data.empty:
+    st.error("🚦 Yahoo Finance is currently rate-limiting this cloud server's IP address. Please wait a few moments and refresh the app to retry.")
+else:
+    st.success(f"📦 Successfully parsed data for {target_ticker}!")
+    
+    # Run the math engine
+    data['ATR'] = calculate_atr(data)
+    data['CHOP'] = calculate_choppiness(data)
+    data['ADX'] = calculate_adx(data)
+    
+    # Extract latest readings
+    latest_chop = float(data['CHOP'].iloc[-1])
+    latest_adx = float(data['ADX'].iloc[-1])
+    latest_atr = float(data['ATR'].iloc[-1])
+    latest_price = float(data['Close'].iloc[-1])
+    
+    # Classify State
+    if latest_adx >= 23.0 and latest_chop < 50.0:
+        regime = TRENDING_REGIME
+        color = "green"
+    else:
+        regime = CHOPPY_REGIME
+        color = "orange"
+        
+    # 🖥️ Render beautiful UI Cards
+    st.markdown("---")
+    st.markdown(f"### Current Market Regime: <span style='color:{color};'>{regime}</span>", unsafe_allow_html=True)
+    
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Last Price", f"${latest_price:,.2f}")
+    col2.metric("Choppiness Index", f"{latest_chop:.2f}")
+    col3.metric("ADX Strength", f"{latest_adx:.2f}")
+    col4.metric("ATR Volatility", f"${latest_atr:.2f}")
+    
+    # Show underlying data preview
+    st.markdown("### Recent Technical Tape Data")
+    st.dataframe(data[['Close', 'ATR', 'CHOP', 'ADX']].tail(10))
