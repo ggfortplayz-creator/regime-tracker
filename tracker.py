@@ -174,4 +174,86 @@ with col_main:
         
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Last Executed Price", f"${latest_focus['Close']:,.2f}")
-        m2.metric("RVOL Factor", f"{latest_focus
+        m2.metric("RVOL Factor", f"{latest_focus['RVOL']:.1f}x")
+        m3.metric("Structural Chop Index", f"{latest_focus['CHOP']:.2f}")
+        m4.metric("ATR Band Drift", f"${latest_focus['ATR']:.2f}")
+        
+        st.markdown("#### 📈 Multi-Pane Technical Analysis Workspace")
+        c1, c2 = st.columns(2)
+        
+        # Chart 1: 6-Month Framework with S&R Levels mapped onto the coordinate matrix
+        with c1:
+            fig1 = go.Figure(data=[go.Candlestick(
+                x=focus_data.index, open=focus_data['Open'], high=focus_data['High'],
+                low=focus_data['Low'], close=focus_data['Close'], name="Candles"
+            )])
+            # Draw Resistance Level
+            fig1.add_hline(y=p_high, line_dash="dash", line_color="#ff3366", annotation_text="Prev High Breakout", annotation_position="top left")
+            # Draw Support Level
+            fig1.add_hline(y=p_low, line_dash="dash", line_color="#33cc34", annotation_text="Prev Low Floor", annotation_position="bottom left")
+            
+            fig1.update_layout(
+                template="plotly_dark", title="6-Month Framework (S&R Levels)", height=260, 
+                margin=dict(l=10, r=10, t=30, b=10), xaxis_rangeslider_visible=False, dragmode="pan"
+            )
+            st.plotly_chart(fig1, use_container_width=True, config={'scrollZoom': True})
+            
+        with c2:
+            short_df = focus_data.tail(30)
+            fig2 = go.Figure(data=[go.Scatter(
+                x=short_df.index, y=short_df['Close'], 
+                mode='lines+markers', line=dict(color='#00ffcc'), name="30D Close"
+            )])
+            fig2.update_layout(
+                template="plotly_dark", title="30-Day Velocity Zoom Panel", height=260, 
+                margin=dict(l=10, r=10, t=30, b=10), dragmode="pan"
+            )
+            st.plotly_chart(fig2, use_container_width=True, config={'scrollZoom': True})
+
+        # 📰 CURRENT FOCUS ACTIVE NEWS FEED PANEL
+        st.markdown("---")
+        st.markdown("### 📰 Routed Catalyst Streaming Feed")
+        
+        if focus_news:
+            valid_articles_count = 0
+            for item in focus_news:
+                if valid_articles_count >= 5:
+                    break
+                title = item.get('title') or item.get('headline')
+                link = item.get('link') or item.get('url') or "#"
+                publisher = item.get('publisher') or item.get('source') or "Financial Feed"
+                p_time = item.get('providerPublishTime') or item.get('pubdate') or item.get('publishDate')
+                
+                if not title:
+                    continue
+                
+                time_str = "Recent"
+                badge, txt_col = "📁 [TRACKING]", "#888888"
+                if p_time:
+                    try:
+                        dt_pub = datetime.fromtimestamp(int(p_time), timezone.utc)
+                        time_str = dt_pub.strftime('%H:%M:%S UTC')
+                        h_diff = (datetime.now(timezone.utc) - dt_pub).total_seconds() / 3600.0
+                        
+                        if h_diff <= 1.0:
+                            badge, txt_col = "💥 [CRIMSON FLASH]", "#ff3333"
+                        elif h_diff <= 5.0:
+                            badge, txt_col = "🔥 [ORANGE CATALYST]", "#ff9933"
+                        elif h_diff <= 12.0:
+                            badge, txt_col = "☀️ [YELLOW GLOW]", "#ffff33"
+                    except:
+                        pass
+                    
+                st.markdown(f"""
+                    <div style="padding:8px; border-left: 4px solid {txt_col}; background-color: #1e1e1e; margin-bottom:6px; border-radius:4px;">
+                        <span style="color: {txt_col}; font-weight:bold;">{badge} ({time_str})</span><br/>
+                        <a href="{link}" target="_blank" style="color: #ffffff; font-weight:500; text-decoration:none;">{title}</a><br/>
+                        <span style="color: #888888; font-size:11px;">Source: {publisher}</span>
+                    </div>
+                """, unsafe_allow_html=True)
+                valid_articles_count += 1
+            
+            if valid_articles_count == 0:
+                st.info("No formatted market news items available at this time.")
+        else:
+            st.info("No active structural print cycles found for this asset index.")
