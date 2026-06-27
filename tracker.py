@@ -8,12 +8,15 @@ from datetime import datetime, timezone
 # 🏢 Page Initialization
 st.set_page_config(layout="wide", page_title="⚡ TapeStrike Terminal")
 
+# Injecting terminal styles and custom structural layout tweaks
 st.markdown("""
     <style>
         .block-container { padding-top: 1rem; padding-bottom: 1rem; }
         div[data-testid="stMetricValue"] { font-size: 24px !important; font-weight: bold; }
         .stDataFrame { font-size: 12px !important; }
         .alert-box { padding: 6px; background-color: #1a1a1a; border-radius: 4px; margin-bottom: 4px; font-family: monospace; font-size: 11px; }
+        .heatmap-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px; margin-top: 5px; }
+        .heatmap-card { padding: 8px; border-radius: 4px; text-align: center; font-weight: bold; font-family: monospace; font-size: 12px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -28,6 +31,14 @@ WATCHLIST = {
     "Bitcoin Digital Tape": "BTC-USD",
     "Gold Safe Haven": "GLD",
     "Crude Oil Energy": "USO"
+}
+
+# 🗺️ Sector Heatmap Reference Core
+SECTORS = {
+    "XLK": "Technology",
+    "XLF": "Financials",
+    "XLV": "Healthcare",
+    "XLE": "Energy"
 }
 
 # 🔄 Caching Core Math Data & News - STRICT 60-SECOND REFRESH
@@ -59,14 +70,37 @@ def fetch_terminal_data(ticker):
             dx = 100 * ((plus_di - minus_di).abs() / (plus_di + minus_di))
             df['ADX'] = dx.rolling(window=14).mean()
             
-            # 3. RVOL Calculation (Current Day Volume / 20-Day Average Volume)
+            # 3. RVOL Calculation
             df['Vol_Avg20'] = volume.rolling(window=20).mean()
             df['RVOL'] = volume / df['Vol_Avg20']
             
-            return df.dropna(subset=['ATR', 'CHOP', 'ADX', 'RVOL']), news_feed
+            # 4. VWAP Approximation (Typical Price * Volume cumulative trace)
+            tp = (high + low + close) / 3.0
+            df['VWAP'] = (tp * volume).rolling(window=14).sum() / volume.rolling(window=14).sum()
+            # Fallback if volume rolling is zero
+            df['VWAP'] = df['VWAP'].fillna(close)
+            
+            return df.dropna(subset=['ATR', 'CHOP', 'ADX', 'RVOL', 'VWAP']), news_feed
     except:
         return None, []
     return None, []
+
+# Fetch Sector Matrix Changes
+@st.cache_data(ttl=60)
+def fetch_sector_data():
+    sector_perf = {}
+    for sym, name in SECTORS.items():
+        try:
+            tk = yf.Ticker(sym)
+            h = tk.history(period="2d")
+            if len(h) >= 2:
+                pct = ((h['Close'].iloc[-1] - h['Close'].iloc[-2]) / h['Close'].iloc[-2]) * 100
+                sector_perf[name] = pct
+            else:
+                sector_perf[name] = 0.0
+        except:
+            sector_perf[name] = 0.0
+    return sector_perf
 
 # 🔥 The Recency Catalyst Flame Engine
 def calculate_news_flame(news_list):
@@ -93,10 +127,11 @@ def calculate_news_flame(news_list):
             
     return highest_status[0], highest_status[1]
 
-# 🗂️ Compile Sidebar Scanner Engine Data
+# 🗂️ Compile Core Data & Triggers
 matrix_results = []
 news_store = {}
 hod_alerts = []
+audio_queue = []
 
 for name, ticker in WATCHLIST.items():
     df_metrics, raw_news = fetch_terminal_data(ticker)
@@ -111,18 +146,21 @@ for name, ticker in WATCHLIST.items():
         
         # 🚨 HOD Momentum Trigger Logic
         if latest['Close'] >= (latest['High'] * 0.995):
-            hod_alerts.append(f"⚡ [ALERT] {ticker} striking near session highs. Price: ${latest['Close']:,.2f} | RVOL: {latest['RVOL']:.1f}x")
+            alert_msg = f"⚡ [ALERT] {ticker} striking near session highs. Price: ${latest['Close']:,.2f}"
+            hod_alerts.append(alert_msg)
+            # Add ticker string safely to audio queue stack
+            audio_queue.append(f"{ticker} breakout alert")
             
         matrix_results.append({
             "Symbol": ticker,
             "Price": f"${latest['Close']:,.2f}",
             "RVOL": round(latest['RVOL'], 1),
             "Breakout Potential": round(comp_score, 1),
-            "News State": flame_label,
-            "ADX": round(latest['ADX'], 1)
+            "News State": flame_label
         })
 
 scanner_df = pd.DataFrame(matrix_results).sort_values(by="Breakout Potential", ascending=False)
+sector_map = fetch_sector_data()
 
 # ----------------- LAYOUT BUILDING -----------------
 col_scan, col_main = st.columns([1, 2])
@@ -138,6 +176,21 @@ with col_scan:
         use_container_width=True,
         hide_index=True
     )
+    
+    st.markdown("---")
+    st.markdown("### 🗺️ Institutional Sector Heatmap")
+    heatmap_html = "<div class='heatmap-grid'>"
+    for sec_name, sec_val in sector_map.items():
+        bg_col = "#1c3b2b" if sec_val >= 0 else "#4a151b"
+        txt_col = "#33ff99" if sec_val >= 0 else "#ff4d62"
+        sign = "+" if sec_val >= 0 else ""
+        heatmap_html += f"""
+            <div class='heatmap-card' style='background-color: {bg_col}; color: {txt_col};'>
+                {sec_name}<br/>{sign}{sec_val:.2f}%
+            </div>
+        """
+    heatmap_html += "</div>"
+    st.markdown(heatmap_html, unsafe_allow_html=True)
     
     st.markdown("---")
     st.markdown("### 🚨 High-Of-Day (HOD) Momentum Stream")
@@ -167,7 +220,7 @@ with col_main:
     if focus_data is not None and not focus_data.empty:
         latest_focus = focus_data.iloc[-1]
         
-        # Calculate Key S&R Floor/Ceiling lines dynamically
+        # S&R Structural Floors
         prev_session = focus_data.iloc[-2] if len(focus_data) > 1 else latest_focus
         p_high = prev_session['High']
         p_low = prev_session['Low']
@@ -181,19 +234,25 @@ with col_main:
         st.markdown("#### 📈 Multi-Pane Technical Analysis Workspace")
         c1, c2 = st.columns(2)
         
-        # Chart 1: 6-Month Framework with S&R Levels mapped onto the coordinate matrix
+        # Chart 1: Candlesticks mapped with dynamic Support, Resistance, AND VWAP Lines
         with c1:
-            fig1 = go.Figure(data=[go.Candlestick(
+            fig1 = go.Figure()
+            # 🕯️ Primary Candlesticks
+            fig1.add_trace(go.Candlestick(
                 x=focus_data.index, open=focus_data['Open'], high=focus_data['High'],
                 low=focus_data['Low'], close=focus_data['Close'], name="Candles"
-            )])
-            # Draw Resistance Level
-            fig1.add_hline(y=p_high, line_dash="dash", line_color="#ff3366", annotation_text="Prev High Breakout", annotation_position="top left")
-            # Draw Support Level
-            fig1.add_hline(y=p_low, line_dash="dash", line_color="#33cc34", annotation_text="Prev Low Floor", annotation_position="bottom left")
+            ))
+            # 🟣 Dynamic VWAP Overlay line
+            fig1.add_trace(go.Scatter(
+                x=focus_data.index, y=focus_data['VWAP'],
+                mode='lines', line=dict(color='#b55fe6', width=2), name="VWAP"
+            ))
+            
+            fig1.add_hline(y=p_high, line_dash="dash", line_color="#ff3366", annotation_text="Prev High Breakout")
+            fig1.add_hline(y=p_low, line_dash="dash", line_color="#33cc34", annotation_text="Prev Low Floor")
             
             fig1.update_layout(
-                template="plotly_dark", title="6-Month Framework (S&R Levels)", height=260, 
+                template="plotly_dark", title="6-Month Framework (S&R + VWAP)", height=260, 
                 margin=dict(l=10, r=10, t=30, b=10), xaxis_rangeslider_visible=False, dragmode="pan"
             )
             st.plotly_chart(fig1, use_container_width=True, config={'scrollZoom': True})
@@ -252,8 +311,14 @@ with col_main:
                     </div>
                 """, unsafe_allow_html=True)
                 valid_articles_count += 1
-            
-            if valid_articles_count == 0:
-                st.info("No formatted market news items available at this time.")
-        else:
-            st.info("No active structural print cycles found for this asset index.")
+
+# 🔊 HTML5 Speech Synthesis Injection Pipeline
+if audio_queue:
+    speech_phrase = " Attention. ".join(audio_queue)
+    st.markdown(f"""
+        <script>
+            var msg = new SpeechSynthesisUtterance('{speech_phrase}');
+            msg.rate = 1.1; 
+            window.speechSynthesis.speak(msg);
+        </script>
+    """, unsafe_allow_html=True)
