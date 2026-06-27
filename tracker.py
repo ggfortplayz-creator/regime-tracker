@@ -15,8 +15,8 @@ st.markdown("""
         div[data-testid="stMetricValue"] { font-size: 24px !important; font-weight: bold; }
         .stDataFrame { font-size: 12px !important; }
         .alert-box { padding: 6px; background-color: #1a1a1a; border-radius: 4px; margin-bottom: 4px; font-family: monospace; font-size: 11px; }
-        .heatmap-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 4px; margin-top: 5px; }
-        .heatmap-card { padding: 8px; border-radius: 4px; text-align: center; font-weight: bold; font-family: monospace; font-size: 12px; }
+        .heatmap-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin-top: 5px; }
+        .heatmap-card { padding: 12px; border-radius: 4px; text-align: center; font-weight: bold; font-family: monospace; font-size: 13px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -52,6 +52,9 @@ def fetch_terminal_data(ticker):
         
         if df is not None and not df.empty:
             df = df.dropna(subset=['Close'])
+            if len(df) < 20:
+                return None, []
+                
             high, low, close, volume = df['High'], df['Low'], df['Close'], df['Volume']
             close_prev = close.shift(1)
             
@@ -74,10 +77,9 @@ def fetch_terminal_data(ticker):
             df['Vol_Avg20'] = volume.rolling(window=20).mean()
             df['RVOL'] = volume / df['Vol_Avg20']
             
-            # 4. VWAP Approximation (Typical Price * Volume cumulative trace)
+            # 4. VWAP Approximation
             tp = (high + low + close) / 3.0
             df['VWAP'] = (tp * volume).rolling(window=14).sum() / volume.rolling(window=14).sum()
-            # Fallback if volume rolling is zero
             df['VWAP'] = df['VWAP'].fillna(close)
             
             return df.dropna(subset=['ATR', 'CHOP', 'ADX', 'RVOL', 'VWAP']), news_feed
@@ -85,17 +87,24 @@ def fetch_terminal_data(ticker):
         return None, []
     return None, []
 
-# Fetch Sector Matrix Changes
+# Fetch Sector Matrix Changes with nan Safety Backstop
 @st.cache_data(ttl=60)
 def fetch_sector_data():
     sector_perf = {}
     for sym, name in SECTORS.items():
         try:
             tk = yf.Ticker(sym)
-            h = tk.history(period="2d")
-            if len(h) >= 2:
-                pct = ((h['Close'].iloc[-1] - h['Close'].iloc[-2]) / h['Close'].iloc[-2]) * 100
-                sector_perf[name] = pct
+            h = tk.history(period="5d")  # Requesting 5 days to ensure historical data depth on weekends
+            if h is not None and len(h) >= 2:
+                h = h.dropna(subset=['Close'])
+                c_today = h['Close'].iloc[-1]
+                c_prev = h['Close'].iloc[-2]
+                
+                if pd.isna(c_today) or pd.isna(c_prev) or c_prev == 0:
+                    sector_perf[name] = 0.0
+                else:
+                    pct = ((c_today - c_prev) / c_prev) * 100
+                    sector_perf[name] = pct
             else:
                 sector_perf[name] = 0.0
         except:
@@ -146,9 +155,8 @@ for name, ticker in WATCHLIST.items():
         
         # 🚨 HOD Momentum Trigger Logic
         if latest['Close'] >= (latest['High'] * 0.995):
-            alert_msg = f"⚡ [ALERT] {ticker} striking near session highs. Price: ${latest['Close']:,.2f}"
+            alert_msg = f"⚡ [ALERT] {ticker} near highs. Price: ${latest['Close']:,.2f}"
             hod_alerts.append(alert_msg)
-            # Add ticker string safely to audio queue stack
             audio_queue.append(f"{ticker} breakout alert")
             
         matrix_results.append({
@@ -159,7 +167,11 @@ for name, ticker in WATCHLIST.items():
             "News State": flame_label
         })
 
-scanner_df = pd.DataFrame(matrix_results).sort_values(by="Breakout Potential", ascending=False)
+if matrix_results:
+    scanner_df = pd.DataFrame(matrix_results).sort_values(by="Breakout Potential", ascending=False)
+else:
+    scanner_df = pd.DataFrame(columns=["Symbol", "Price", "RVOL", "Breakout Potential", "News State"])
+
 sector_map = fetch_sector_data()
 
 # ----------------- LAYOUT BUILDING -----------------
@@ -179,14 +191,17 @@ with col_scan:
     
     st.markdown("---")
     st.markdown("### 🗺️ Institutional Sector Heatmap")
+    
+    # Building layout directly in HTML with clean closing tags to protect containment
     heatmap_html = "<div class='heatmap-grid'>"
     for sec_name, sec_val in sector_map.items():
-        bg_col = "#1c3b2b" if sec_val >= 0 else "#4a151b"
-        txt_col = "#33ff99" if sec_val >= 0 else "#ff4d62"
-        sign = "+" if sec_val >= 0 else ""
+        val_checked = 0.0 if (pd.isna(sec_val) or np.isnan(sec_val)) else sec_val
+        bg_col = "#1c3b2b" if val_checked >= 0 else "#4a151b"
+        txt_col = "#33ff99" if val_checked >= 0 else "#ff4d62"
+        sign = "+" if val_checked >= 0 else ""
         heatmap_html += f"""
             <div class='heatmap-card' style='background-color: {bg_col}; color: {txt_col};'>
-                {sec_name}<br/>{sign}{sec_val:.2f}%
+                {sec_name}<br/>{sign}{val_checked:.2f}%
             </div>
         """
     heatmap_html += "</div>"
@@ -234,15 +249,12 @@ with col_main:
         st.markdown("#### 📈 Multi-Pane Technical Analysis Workspace")
         c1, c2 = st.columns(2)
         
-        # Chart 1: Candlesticks mapped with dynamic Support, Resistance, AND VWAP Lines
         with c1:
             fig1 = go.Figure()
-            # 🕯️ Primary Candlesticks
             fig1.add_trace(go.Candlestick(
                 x=focus_data.index, open=focus_data['Open'], high=focus_data['High'],
                 low=focus_data['Low'], close=focus_data['Close'], name="Candles"
             ))
-            # 🟣 Dynamic VWAP Overlay line
             fig1.add_trace(go.Scatter(
                 x=focus_data.index, y=focus_data['VWAP'],
                 mode='lines', line=dict(color='#b55fe6', width=2), name="VWAP"
